@@ -384,7 +384,9 @@ Department of Biomedical Engineering
 ### Team Members
 
 * Nisal Pesara
-* *Add team members here*
+* Theniya Linath
+* Manuth Kuruppu
+* Nethmini kawindya
 
 ---
 
