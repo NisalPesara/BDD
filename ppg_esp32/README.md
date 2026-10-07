@@ -1,97 +1,117 @@
-# ESP32 PPG purification pipeline
+# Updated ESP32-S3 limb PPG research firmware
 
-Sources: **Park et al. 2022, *Photoplethysmogram Analysis and Applications: An Integrative Review*,
-Front. Physiol. 12:808451** and the pyPPG preprocessing in your `initial.ipynb`.
+This folder replaces `BDD/ppg_esp32`. Open **ppg_esp32.ino** in Arduino IDE, or open this folder as a PlatformIO project. Start with the wiring table below, then read [the integration review](docs/INTEGRATION_REVIEW.md).
 
-## Your hardware: ESP32-S3 N16R8 + MAX30102 + MPU6050 + ADXL345
-**Arduino IDE settings:** Board *ESP32S3 Dev Module*, Flash *16MB*, **PSRAM = OPI PSRAM** (N16R8 has octal PSRAM; the wrong
-setting causes a boot loop), **USB CDC On Boot = Enabled**.
+The update integrates the supplied `Libraries`, `PPG-SQI-Improved`, `minor-noise.zip` and `text1.txt` ideas into one executable acquisition and processing path. The uploaded BDD archive was the baseline: the live GitHub folder could not be retrieved for a current-commit comparison. No Claude URL was present in the message, text, source files, notebook or PDF links inspected.
 
-**Wiring (all 3.3 V, one shared I2C bus, SDA = GPIO8, SCL = GPIO9):**
-| Device | Address | Note |
+**Purpose:** record distal optical pulsatility and pressure/motion context, and compare accepted pulse features with a deliberately captured baseline. These measurements do not establish adequate limb blood flow, measure flow in mL/min, or determine blood-flow direction. This is research firmware, not an automatic tourniquet controller. Do not use its trends to decide tourniquet application or release.
+
+## What is connected
+
+Assumption: **ESP32-S3 DevKitC-1 with N16R8 module**, MAX30102, two ADXL345s and two band FSRs. If your board differs, revise the pin mapping before connecting it.
+
+| Function | ESP32-S3 connection | Details |
 |---|---|---|
-| MAX30102 | 0x57 | on the finger |
-| ADXL345 | 0x53 | SDO/ALT ADDRESS -> GND (0x1D if tied to 3V3; change `ADXL345_ADDR`) |
-| MPU6050 | 0x68 | AD0 -> GND |
+| I2C SDA | GPIO 8 | MAX30102 and both ADXL345s share the bus |
+| I2C SCL | GPIO 9 | 400 kHz; pull-ups to 3.3 V |
+| MAX30102 | I2C 0x57 | RED + IR, paired FIFO reads |
+| Probe ADXL345 | I2C 0x53 | SDO to GND; CS to 3.3 V |
+| Reference ADXL345 | I2C 0x1D | SDO to 3.3 V; CS to 3.3 V |
+| Band FSR 1 | GPIO 4 | Buffered divider output, ADC1 |
+| Band FSR 2 | GPIO 5 | Buffered divider output, ADC1 |
+| Analog PPG reservation | GPIO 6 | Reserved only; no analog PPG driver selected |
+| NIRS analog channel 1 reservation | GPIO 1 | Optional external AFE voltage output |
+| NIRS analog channel 2 reservation | GPIO 2 | Optional external AFE voltage output |
+| NIRS enable reservation | GPIO 10 | Not driven: AFE enable polarity is unknown |
+| USB | GPIO 19/20 | Retained for native USB |
 
-Never use GPIO 35/36/37 (used by the octal PSRAM).
-**Libraries:** SparkFun MAX3010x Pulse and Proximity Sensor Library; Adafruit MPU6050; Adafruit ADXL345; Adafruit Unified Sensor.
+The ESP32-S3 has no GPIO22-25. Avoid the flash/PSRAM pins, particularly GPIO26-37 on this module. All grounds must be common. Use the supply voltage required by each **breakout board**; a bare MAX30102 chip is not a 3.3 V-only breakout. MCU inputs and I2C pull-ups must stay within the board's permitted levels.
 
-### Two-accelerometer relative-motion cancellation (m06 + m06b)
-- "Finger" sensor = the one next to the MAX30102; "band" sensor = the one on the wrist/hand band. Set `ACC_FINGER_IS_MPU`.
-- `ANC_MODE_REL9` (default): references = finger acceleration, **relative acceleration** (finger - band) and
-  **relative velocity** (leaky integral of the relative acceleration, 0.3 Hz corner so it does not drift).
-- `ANC_MODE_ABS6`: the plain alternative, the 6 raw axes of both sensors. Compare the two on your own recordings.
-- This two-sensor relative scheme is **my implementation of your idea**, not a method from Park 2022 (which cites
-  single-accelerometer adaptive cancellation).
-- **Mounting matters:** relative motion is only meaningful if both sensors' axes agree. Mount them with parallel axes.
-  Check: set `DEBUG_STREAM_RAW 1`, tape/hold both boards rigidly together, shake them, and look at the streamed columns
-  (finger xyz vs band xyz). Each axis pair should move together. If an axis is swapped or reversed, fix
-  `BAND_AXIS_IDX` / `BAND_AXIS_SGN` in `config.h`. `DEBUG_STREAM_RAW 1` also lets you record raw IR + 6 axes to test
-  the canceller offline in Python.
-- An accelerometer cannot see every artifact source (contact pressure, tissue deformation, ambient light). Cancellation
-  reduces motion artifact; it does not remove it. Keep the SQI on so bad windows are still skipped.
+FSR convention: 3.3 V -> FSR -> ADC node -> 10 kOhm -> GND. Use an appropriate buffer/RC filter. Firmware uses `analogReadMilliVolts()`, not a false assumption that ADC code 4095 equals 3.3 V. The calculated output is estimated conductance in microSiemens, not calibrated force or pressure. The present ADC saturation gate starts at 3090 mV; design the divider to keep its useful output below that range and calibrate your board.
 
-## How to use
-1. Copy the folder `ppg_esp32/` into your Arduino sketchbook (folder name must match `ppg_esp32.ino`).
-2. Install **esp32 by Espressif** in Boards Manager, apply the settings above, install the libraries.
-3. Check `config.h` (pins, `INVERT_SIGNAL`). If fs is not 125 Hz: `cd tools && python gen_coeffs.py <fs>` and re-flash.
-4. Put your wave-properties code in `wave_detection.h` (on-device) **or** stream to the PC with `tools/receive_from_esp32.py`.
-5. First run: plot the output. If the systolic peaks point DOWN, set `INVERT_SIGNAL 0`. If the IR level is very low/saturated, change the LED current (`0x24`) in the sketch.
+## Bring-up
 
-## Data flow
+1. Extract the ZIP. Keep the entire `ppg_esp32` folder together. Back up the old folder, then replace it with this folder. Do not copy only the `.ino`.
+2. Check `config.h`: board pins, FSR divider, `NUM_ACCEL`, pulse polarity, and sensor count. Default `NUM_ACCEL=2`; use 1 or 0 only when those sensors are actually absent. A missing configured accelerometer makes motion quality invalid.
+3. In Arduino IDE select **ESP32S3 Dev Module**, USB CDC enabled, 16 MB flash, appropriate 16 MB partition, and OPI PSRAM for N16R8. Open `ppg_esp32.ino`. Only ESP32 Arduino core/Wire are needed; no MPU6050, Adafruit or SparkFun sensor library is required by this version.
+4. Or, in VS Code / PlatformIO, open this folder and run `pio run -e esp32-s3-n16r8`, then `pio run -t upload`. The configuration pins Espressif32 6.9.0 for reproducibility; a real target build still needs to be performed on your system.
+5. Open Serial Monitor at 460800 baud. Send `h` to reprint CSV headers. Native USB may ignore the numeric baud rate. Wait for filter settling and accepted pulses; startup is not instantaneous.
+6. Inspect raw IR/RED and the upward systolic pulse. Change `INVERT_SIGNAL` if needed. Tune LED current and placement on recorded data. `MAX_LED_CURRENT_CODE=100` means register code 100, approximately **20 mA**, not 100 mA. Automatic gain changes are intentionally absent because they invalidate amplitude comparisons.
+7. With the probe fixed and a stable intended baseline condition, send **b**. Ten consecutive accepted pulse reports establish a fixed median baseline. Send **r** to reset filters and baseline. Reboot after correcting an initial sensor-setup failure.
+8. For research recordings set `STREAM_EVERY_N=1` and record every 125 Hz frame. The default 5 produces a 25 Hz preview stream while internal processing remains at 125 Hz. Decimated preview data cannot reproduce the original derivative pipeline.
+
+No firmware-upload or hardware tests were possible in the preparation environment. See [validation](docs/VALIDATION.md) for exactly what was tested.
+
+## Recommended flow
+
+```mermaid
+flowchart TD
+  A["MAX30102: paired IR and red, 125 Hz"] --> B["FIFO, range and contact checks"]
+  B --> C["IR: Hampel, DC removal, high-pass"]
+  M["ADXL345 references"] --> D["Matched delay and filters; optional NLMS"]
+  C --> D
+  D --> E["Low-pass and aligned SG derivatives"]
+  E --> F["SQI, peaks, complete-pulse features"]
+  P["FSR stability and motion checks"] --> F
+  F --> G["Pulse trends against fixed baseline"]
+  B --> H["Raw red/IR: matched low-pass, 125 to 25 Hz"]
+  H --> I["Four-second SpO2 estimate; quality gate"]
 ```
-raw -> [m06 NLMS ANC] -> DC removal -> m01 filter -> [m02 baseline] -> [m05 amp-reg] -> m04 smoothing -> clean PPG
-clean PPG -> VPG/APG/JPG (derivatives.h) | upslope (m03) | SQI (m07) | beat flag (m08) -> waveDetectionProcess()
-```
 
-## Paper methods -> code
-| Paper method (section / reference) | Status | File |
+| Setting | Default |
+|---|---|
+| MAX30102 conversions | 1000/s, 118 us pulse width, average 8 |
+| Effective FIFO pair rate | 125 Hz; `dt=0.008 s` |
+| Hampel | 5 samples, threshold 5 x robust sigma |
+| DC tracker / high-pass | 0.05 Hz / 2nd-order 0.15 Hz |
+| Low-pass | 4th-order 10 Hz Butterworth |
+| SG smoother and derivatives | 15 samples, cubic, 120 ms window |
+| Known centered-filter delay | 9 samples = 72 ms, plus IIR phase delay |
+| SQI | 5-second window, 1-second hop, autocorrelation near 25 Hz |
+| ANC | Off initially; six available axes, 8 taps, mu 0.01 when enabled |
+| SpO2 branch | Matched 6 Hz low-pass, average/decimate by 5 |
+| SpO2 analysis | 100 samples at 25 Hz, 4 seconds, update every 1 second |
+
+The SG delay is 7 samples, the Hampel delay is 2. Subtracting 72 ms corrects only those known delays. It does not undo the frequency-dependent IIR delay or prove that a detected notch is a physiological fiducial.
+
+## Measurements and interpretation
+
+| Output | Why it is included | Limitation |
 |---|---|---|
-| Band-pass Butterworth: Sukor 2011, Liu 2020b, Papini 2018, Pradhan 2019, Canac 2019 | implemented | m01 |
-| Chebyshev I (Ferro 2015), Chebyshev II (Allen & Murray 2004 / pyPPG) | implemented | m01 |
-| High-pass 0.15 Hz (Joseph 2014); low-pass 10 Hz (Liu 2020a), 15 Hz (Fischer 2017) | implemented | m01 |
-| Baseline wandering: HPF (Jang 2014) / estimate-and-subtract (Timimi 2017) | HPF exact; subtraction = causal lower-envelope approximation | m01, m02 |
-| Moving-difference filter (Canac 2019) | implemented (separate `upslope` output) | m03 |
-| Smoothing windows (pyPPG `sm_wins`) | implemented | m04 |
-| Amplitude regularisation (Kim 2019) | causal envelope approximation | m05 |
-| Motion artifact: adaptive noise cancellation, NLMS (Widrow 1975, Han 2007, Foo & Wilson 2006, Poh 2010) | implemented; multi-reference (6 axes of 2 accelerometers x 8 taps) | m06 |
-| SQI: skewness/kurtosis (Krishnan 2008, Selvaraj 2011, Elgendi 2016), entropy (Selvaraj), perfusion index (Gehring 2002, Cannesson 2008), cross-correlation idea (Karlen 2012) | implemented (rule-based) | m07 |
-| Adaptive-threshold peak detection (Shin 2009) | implemented (optional helper) | m08 |
-| Derivative PPG: VPG / APG (Takazawa 1998, Fig. 5) | implemented | derivatives.h |
-| 64th-order FIR (Selvaraj), DCT filtering (Shin 2010) | not included (offline/block based) | - |
-| EMD (Lu 2008), wavelet (Vadrevu 2018, Patterson 2011, Tang 2016), ICA (Kim & Yoo 2006, Lee 2020), Fourier cycle-by-cycle (Reddy 2008) | not on ESP32: non-causal / heavy / need multi-wavelength channels. Do these in Python offline | - |
-| Kalman adaptive filter (Seyedtabaii 2008), Wiener filter (Foo & Wilson 2006) | not included | - |
-| 32nd-order polynomial detrending (Selvaraj 2011) | not included: numerically unstable in float32; use m02 instead | - |
-| Wavelet-scalogram peaks (Scholkmann 2012), ML/DL peak detection & SQI, RNN reconstruction | not included | - |
-| Feature extraction of Table 1 (crest time, b/a, c/a, PW50 ...) | **your detection code** | wave_detection.h |
+| Pulse presence and interval | Whether repeatable pulsatility is detectable | Absence may reflect poor measurement, weak pulsatility or altered perfusion |
+| Amplitude in ADC counts | Within-setup pulse-strength trend | Depends on LED drive, contact, tissue, placement and filters |
+| Pulse PI (%) | 100 x pulse amplitude / raw DC level | This implementation's definition; not interchangeable with a commercial monitor |
+| Pulse area / AUC | Integrates the complete pulse shape | Count-seconds, not blood volume or flow |
+| Systolic/diastolic area | Shares one baseline with total AUC | Available only when a notch/inflection is detected |
+| Crest time and 50% pulse width | Morphology and timing changes | Causal filtering and limb location affect both |
+| VPG/APG and optional a-f indices | Exploratory morphology | Derivative sign does not indicate flow direction; not used as a clinical decision rule |
+| FSR conductance and stability | Pressure-related confounding | Requires calibration to report force, and area/contact modeling to infer pressure |
+| Raw accelerometers | Motion context and future ANC tuning | Two devices are approximately sampled together, not hardware synchronized |
+| SpO2 estimate | Additional experimental optical channel | Unvalidated algorithm/site; not tissue oxygenation or proof of perfusion |
 
-## Important caveats
-- **Causal vs zero-phase.** pyPPG filters forward-backward (no delay). Real-time filtering is one-directional, so the
-  waveform is delayed and slightly distorted. Timing features (crest time, PPI) keep their relative meaning but absolute
-  timestamps shift. For exact pyPPG equivalence, record with `receive_from_esp32.py` (or stream raw) and filter offline.
-- **Cheby-II stopband** is 20 dB in the generator (my recollection of pyPPG's setting; not stated in your notebook).
-  Ferro's Cheby-I ripple (0.5 dB) is also assumed, since the paper doesn't give it.
-- **SQI thresholds are starting values** validated only on a synthetic signal. Tune on your sensor. Skewness sign depends on
-  whether your sensor output is inverted.
-- **Warm-up**: first `WARMUP_SECONDS` samples are not streamed (filter settling).
-- The MAX30102 settings (1000 sps averaged x8 = 125 Hz), the two-MPU6050 wiring and the ESP32-S3 sketch itself have **not** been run on hardware.
-- **ANC test (synthetic, two accelerometers; `test/anc_test.cpp`, compile with `-DANC_MODE=0` or `1`).** Correlation with the
-  motion-free signal, no cancellation -> with cancellation:
+The original stiffness/aging index outputs are removed from the active reporting path. Normalizing pulse amplitude before measuring amplitude or AUC is also removed. `m04_smoothing.h` remains as a tested moving-average alternative; it is not cascaded with SG in the default pipeline.
 
-  | Synthetic artifact model | ABS6 | REL9 |
-  |---|---|---|
-  | proportional to relative velocity | 0.35 -> 0.29 | 0.35 -> 0.60 |
-  | proportional to absolute finger acceleration | 0.37 -> 0.73 | 0.37 -> 0.79 |
+`REDUCED_PULSE_TREND` means amplitude and PI are below 50% of the chosen baseline for three accepted pulses. It is an adjustable research rule, not a diagnosis. `PULSE_DETECTED` means a pulse was detected, not that circulation is adequate. Poor quality remains explicit; zero or an old value is not substituted for unavailable measurements.
 
-  REL9 was better in both cases here, and ABS6 cannot model a velocity-type artifact. But these numbers only reflect the
-  artifact models I invented; real motion is less linear. Which model is closer to your hand must be checked on real data.
-  The filter/SQI/peak headers were compiled and tested natively (`test/`).
+## FSR roles, ANC and NIRS
 
-## Tests (desktop, optional)
+The supplied project describes **both FSRs at the compression band**. They gate pressure stability, but low band pressure does not mean the optical probe is detached. Leave `CONTACT_FSR_INDEX=-1`. Set it to 0 or 1 only if that FSR is physically moved to the optical probe and its thresholds are calibrated. Optical count thresholds alone cannot reliably establish contact in every lighting condition.
+
+ANC is integrated but defaults to off. One three-axis sensor can provide references; two are not mathematically required. With one sensor the other three channels are zero. This version uses six absolute, DC-removed axes rather than unvalidated integrated relative velocity. Align the reference board axes with `REFERENCE_AXIS_IDX/SIGN`, measure rest noise, then set `ANC_MIN_ENERGY`. Motion still gates feature reporting even when ANC is on. A nicer-looking waveform is not evidence that all motion artifact was removed.
+
+**NIRS is not fully implemented because its hardware was unspecified.** GPIO1/2 and GPIO10 are reserved. `NIRS_MODE=1` enables raw logging only for an external AFE that already provides two safe, continuous analog outputs. An LED-multiplexed photodiode circuit, ADS1115, AFE4404, UART instrument, or commercial oximeter needs a different adapter. Wavelengths, source-detector distance, LED timing, dark/ambient subtraction, channel calibration and a validated model are required before deriving HbO2/HHb or StO2. MAX30102 SpO2 must not be relabeled as NIRS tissue saturation.
+
+## Recording and desktop checks
+
+```text
+python -m pip install pyserial
+python tools/capture.py --port COM5 --output session.csv
+python tools/split_records.py session.csv --out session_tables
+python tests/run_tests.py
 ```
-cd test
-g++ -O2 -std=c++17 -I.. native_test.cpp -o t && ./t > out.csv
-```
-Result on the synthetic 60 s signal (sign-inverted like a reflective sensor) (72 bpm, drift, noise, 10 s motion burst): 70 beats detected, 24/24 clean windows
-accepted, 10/10 motion windows rejected. C++ float32 Cheby-II output matches SciPy within 3.5e-5.
+
+The capture tool prints status lines and accepts `b`, `r`, `h` followed by Enter. `Ctrl+C` closes the file. Use a different COM port if necessary. The test runner requires g++/MinGW; it builds in a temporary folder. For sanitizer checks on a restricted Linux container use `ASAN_OPTIONS=detect_leaks=0 python tests/run_tests.py --sanitize` (address and undefined-behavior checks remain enabled).
+
+Full raw recordings can be replayed through the same C++ pipeline with `tools/replay.cpp`; see its build/run comment. The replay rejects preview-only recordings and resets on epoch/timing gaps.
+
+See [CSV and modules](docs/MODULES_AND_OUTPUT.md), [integration review](docs/INTEGRATION_REVIEW.md), and [hardware validation steps](docs/VALIDATION.md). `legacy/` contains the original headers for comparison only; the active firmware does not include them.

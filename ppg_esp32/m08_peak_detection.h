@@ -1,40 +1,54 @@
-// METHOD 8 - Adaptive-threshold peak detection (Shin, Lee & Lee 2009)
-//  Threshold tracks the signal amplitude; peaks accepted only outside a refractory
-//  period. Robust to slow baseline changes (unlike a fixed-threshold LCM detector).
-//  Included as a REFERENCE / helper (beat flag, heart-rate). Your own wave-properties
-//  code can replace it. A peak is reported one sample late (needs the next sample to
-//  confirm the local maximum): the peak is at sample index (n-1).
 #pragma once
-struct AdaptivePeakDetector {
-  int fs = 125, refractory = 37;
-  unsigned long n = 0, lastPeak = 0;
-  float p1 = 0, p2 = 0, amp = 0, thr = 0, maxSeen = 0;
-  float decay = 0.9998f;
-  int learnSamples = 250; bool learned = false;
-  float lastIbiSec = 0;
+#include <math.h>
+#include <stdint.h>
 
-  void begin(int fs_) {
-    fs = fs_; refractory = (int)(0.30f * fs); learnSamples = 2 * fs;
-    n = lastPeak = 0; p1 = p2 = amp = thr = maxSeen = 0; learned = false; lastIbiSec = 0;
+// Prominence plus adaptive refractory detection. A candidate must exceed 60%
+// of the recent pulse range; this rejects the supplied 45% diastolic-wave case.
+// This is a heuristic detector, not an arrhythmia classifier.
+class AdaptivePeakDetector {
+ public:
+  void begin(int fs) {
+    fs_ = fs; n_ = last_ = 0; havePeak_ = false; learned_ = false;
+    p1_ = p2_ = high_ = low_ = trough_ = amp_ = ibi_ = 0;
   }
   bool process(float x) {
-    n++;
-    if (!learned) {                                   // first 2 s: learn amplitude
-      if (x > maxSeen) maxSeen = x;
-      if ((int)n >= learnSamples) { amp = 0.8f * maxSeen; thr = 0.5f * amp; learned = true; }
-      p2 = p1; p1 = x; return false;
+    const uint64_t cur = n_++;
+    if (!isfinite(x)) { begin(fs_); return false; }
+    if (!learned_) {
+      if (!cur) high_ = low_ = x;
+      if (x > high_) high_ = x;
+      if (x < low_) low_ = x;
+      if (n_ >= uint64_t(2 * fs_)) {
+        amp_ = high_ - low_; trough_ = low_; learned_ = true;
+      }
+      p2_ = p1_; p1_ = x; return false;
     }
-    bool found = false;
-    bool localMax = (p1 > p2 && p1 >= x);
-    if (localMax && p1 > thr && (n - 1 - lastPeak) > (unsigned long)refractory) {
-      if (lastPeak) lastIbiSec = (float)(n - 1 - lastPeak) / fs;
-      lastPeak = n - 1; found = true;
-      amp = 0.75f * amp + 0.25f * p1; thr = 0.5f * amp;
-    } else {
-      thr *= decay; if (thr < 0.25f * amp) thr = 0.25f * amp;
+    if (x < trough_) trough_ = x;
+    const uint64_t at = cur - 1;
+    const float elapsed = havePeak_ ? float(at - last_) / fs_ : 100.f;
+    const float refractory = fmaxf(60.f / 180.f - 1.f / fs_, ibi_ > 0 ? 0.60f * ibi_ : 60.f / 180.f);
+    // Slowly re-acquire weaker pulses after a long gap. No stale BPM survives.
+    if (havePeak_ && elapsed > 2.f) amp_ *= expf(-1.f / (2.f * fs_));
+    const float prominence = p1_ - trough_;
+    const bool found = p1_ > p2_ && p1_ >= x && prominence > fmaxf(1e-4f, .60f * amp_)
+                       && elapsed >= refractory;
+    if (found) {
+      if (havePeak_ && elapsed >= 60.f / 180.f - 1.f / fs_ && elapsed <= 60.f / 40.f + 1.f / fs_)
+        ibi_ = ibi_ > 0 ? .75f * ibi_ + .25f * elapsed : elapsed;
+      else ibi_ = 0;
+      last_ = at; havePeak_ = true;
+      amp_ = .75f * amp_ + .25f * prominence;
+      trough_ = p1_;
     }
-    p2 = p1; p1 = x;
+    p2_ = p1_; p1_ = x;
     return found;
   }
-  float bpm() const { return lastIbiSec > 0 ? 60.0f / lastIbiSec : 0; }
+  float bpm() const {
+    return havePeak_ && ibi_ > 0 && n_ - last_ < uint64_t(3 * fs_) ? 60.f / ibi_ : NAN;
+  }
+ private:
+  int fs_ = 125;
+  uint64_t n_ = 0, last_ = 0;
+  bool havePeak_ = false, learned_ = false;
+  float p1_ = 0, p2_ = 0, high_ = 0, low_ = 0, trough_ = 0, amp_ = 0, ibi_ = 0;
 };

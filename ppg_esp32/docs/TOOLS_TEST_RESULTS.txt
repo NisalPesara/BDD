@@ -1,0 +1,4 @@
+Full-rate synthetic replay: 47 accepted pulse reports from 6250 samples.
+CSV split: 6250 SAMPLE records, zero malformed records.
+Preview-rate replay rejected with exit code 2.
+Capture CLI/Python tools syntax checked; physical serial capture not tested.

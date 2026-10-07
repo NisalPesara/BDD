@@ -1,0 +1,14 @@
+{
+  "minor-noise.zip": {
+    "bytes": 46505,
+    "sha256": "2a5ad7740e24475cd66cff06e068c2a148db78d055104d0848ace5cdddc75a95"
+  },
+  "BDD-main (1).zip": {
+    "bytes": 4482761,
+    "sha256": "edc2766fed038cd4b69d0436e037085d7124d037888f3540754900c9441e2feb"
+  },
+  "text1.txt": {
+    "bytes": 15736,
+    "sha256": "b445ce7ae95be68441cd166cde2762c90a731d62c07f85806c217f4f81f30d22"
+  }
+}

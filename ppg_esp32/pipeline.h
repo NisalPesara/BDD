@@ -1,110 +1,71 @@
-// Complete real-time PPG pre-processing chain.
-//   raw --> [ANC accel] --> DC removal --> frequency filter --> [baseline subtract]
-//       --> [amplitude regularisation] --> moving-average smoothing --> PPG (clean)
-//   clean --> VPG / APG / JPG,  moving-difference "upslope",  SQI,  optional beat flag
-// Each stage is a separate method module (m01..m08) and can be switched off.
 #pragma once
-#include <stdint.h>
 #include <math.h>
+#include <stdint.h>
 #include "config.h"
-#include "m01_frequency_filters.h"
-#include "m02_baseline_removal.h"
-#include "m03_moving_difference.h"
-#include "m04_smoothing.h"
-#include "m05_amplitude_regularization.h"
-#include "m06_nlms_anc.h"
-#include "m06b_accel_relative.h"
-#include "m07_sqi.h"
+#include "ppg_noise/ppg_noise.h"
 #include "m08_peak_detection.h"
-#include "derivatives.h"
 
 struct PpgSample {
-  uint32_t t_ms = 0;
-  float raw = 0;
-  float ppg = 0;        // purified PPG
-  float upslope = 0;    // moving-difference output (Canac) for onset/peak detection
-  float vpg = 0, apg = 0, jpg = 0;
-  bool  valid = false;  // false during filter warm-up
-  bool  sqi_good = false;
-  bool  beat = false;   // built-in detector: peak was at the PREVIOUS sample
-  float bpm = 0;
-  SqiResult sqi;
+  uint64_t t_us = 0, aligned_us = 0;
+  float raw = 0, dc = 0, ppg = 0, vpg = 0, apg = 0;
+  float bpm = NAN, ancEnergy = 0;
+  bool valid = false, sqi_good = false, beat = false, optical = false;
+  bool clipped = false, contact = false, forceStable = false, motionQuiet = false;
+  ppgnr::SqiOut sqi;
 };
 
 struct PipelineConfig {
-  FilterMethod bandpass   = FM_CHEBY2_PYPPG;   // same as your pyPPG notebook (0.5-12 Hz, order 4)
-  bool useHighpass        = false;             // extra Joseph 0.15 Hz HPF (usually redundant with bandpass)
-  bool useBaselineSub     = false;             // m02 lower-envelope baseline subtraction
-  bool useAmpRegularize   = false;             // m05 (destroys absolute amplitude)
-  bool useAnc             = (USE_ANC != 0);    // m06
-  bool useBuiltinPeaks    = true;              // m08
-  int  moveDiffSamples    = 4;                 // m03 window
+  bool useAnc = USE_ANC;
+  bool invert = INVERT_SIGNAL;
 };
 
 class PpgPipeline {
-public:
-  void begin(const PipelineConfig& c = PipelineConfig()) {
-    cfg = c;
-    selectFrequencyFilter(bp, cfg.bandpass);
-    selectFrequencyFilter(hp, cfg.useHighpass ? FM_HP_JOSEPH : FM_NONE);
-    base.begin(PPG_FS);
-    mdiff.begin(cfg.moveDiffSamples);
-    smooth.begin(PPG_FS, SM_PPG_MS);
-    amp.begin(PPG_FS);
-    der.begin(PPG_FS, SM_VPG_MS, SM_APG_MS, SM_JPG_MS);
-    sqi.begin();
-    peaks.begin(PPG_FS);
-    anc.reset(); accRel.begin();
-    n = 0; dcInit = false;
+ public:
+  bool begin(const PipelineConfig& cfg = PipelineConfig()) {
+    cfg_ = cfg;
+    ppgnr::DenoiseConfig c;
+    c.fs = PPG_FS; c.invert = cfg.invert;
+    c.hpHz = PPG_HIGHPASS_HZ; c.lpHz = PPG_LOWPASS_HZ;
+    c.useAnc = cfg.useAnc; c.ancMu = ANC_MU; c.ancPmin = ANC_MIN_ENERGY;
+    c.sgOrder = SG_ORDER;
+    ok_ = den_.begin(c);
+    sqi_.begin(); sqi_.th.minSkew = SQI_MIN_SKEW;
+    sqi_.th.flatSd = 0.5f; // counts; a measured electronics-noise floor is preferable
+    clip_.begin(PPG_FS, MAX_RAW_FULL_SCALE); clip_.lo = 1.f;
+    peaks_.begin(PPG_FS); n_ = 0; active_ = false;
+    return ok_;
   }
-
-  // refs: ACC_RAW_CH raw accelerometer values in m/s^2: finger x,y,z then band x,y,z (or nullptr)
-  PpgSample process(float raw, const float* refs, uint32_t t_ms) {
-    PpgSample s; s.t_ms = t_ms; s.raw = raw;
-    if (INVERT_SIGNAL) raw = -raw;
-    if (!dcInit) { dc = raw; dcInit = true; }
-    dc += kDc * (raw - dc);                       // slow DC tracker (~0.05 Hz)
-    float x = raw - dc;
-
-    if (cfg.useAnc && refs) {                     // m06 (+ m06b builds the reference signals)
-      float r[ANC_NUM_REFS];
-      accRel.process(refs, r);
-      x = anc.process(x, r);
+  // All samples must be uniform and contiguous. Firmware resets on FIFO gaps.
+  PpgSample process(float raw, const float* refs, uint64_t t_us,
+                    bool contact = true, bool forceStable = true, bool motionQuiet = true) {
+    PpgSample s; s.t_us = t_us; s.raw = raw;
+    s.optical = isfinite(raw) && raw >= MIN_OPTICAL_COUNTS;
+    s.contact = contact; s.forceStable = forceStable; s.motionQuiet = motionQuiet;
+    if (!ok_ || !s.optical || !contact || raw >= clip_.hi || raw <= clip_.lo) {
+      s.clipped = isfinite(raw) && (raw >= clip_.hi || raw <= clip_.lo);
+      if (active_) { begin(cfg_); }
+      return s;
     }
-    x = bp.process(x);                            // m01
-    if (cfg.useHighpass) x = hp.process(x);       // m01 (Joseph)
-    if (cfg.useBaselineSub) x = base.process(x);  // m02
-    if (cfg.useAmpRegularize) x = amp.process(x); // m05
-    float p = smooth.process(x);                  // m04
-
-    s.ppg = p;
-    s.upslope = mdiff.process(p);                 // m03
-    der.process(p, s.vpg, s.apg, s.jpg);          // derivatives
-
-    n++;
-    s.valid = (n > (uint32_t)(WARMUP_SECONDS * PPG_FS));
-    if (s.valid) {
-      SqiResult r = sqi.push(p, dc);              // m07
-      s.sqi = r; s.sqi_good = r.good;
-      if (cfg.useBuiltinPeaks) { s.beat = peaks.process(p); s.bpm = peaks.bpm(); }   // m08
-    }
+    active_ = true; if (n_ < WARMUP_SECONDS * PPG_FS) ++n_; clip_.push(raw); s.clipped = clip_.saturated();
+    const auto d = den_.process(raw, refs, forceStable && !s.clipped);
+    s.dc = d.dc; s.ppg = d.clean; s.vpg = d.vpg; s.apg = d.apg;
+    s.ancEnergy = den_.energy();
+    constexpr uint64_t delay = (HAMPEL_WINDOW / 2 + SG_HALF) * PPG_PERIOD_US;
+    s.aligned_us = t_us >= delay ? t_us - delay : 0;
+    s.valid = d.valid && n_ >= WARMUP_SECONDS * PPG_FS && !s.clipped;
+    // Fill SQI while filters settle; the 6-second warm-up exceeds the 5-second window.
+    s.sqi = sqi_.push(s.ppg, s.dc);
+    s.sqi_good = s.valid && s.sqi.good && forceStable && motionQuiet;
+    if (s.valid) s.beat = peaks_.process(s.ppg);
+    s.bpm = s.sqi_good ? peaks_.bpm() : NAN;
     return s;
   }
-
-private:
-  PipelineConfig cfg;
-  SosFilter bp, hp;
-  LowerEnvelopeBaseline base;
-  MovingDifference mdiff;
-  MovingAverage smooth;
-  AmplitudeRegularizer amp;
-  NlmsAnc anc;
-  AccelRelative accRel;
-  Derivatives der;
-  SqiWindow sqi;
-  AdaptivePeakDetector peaks;
-  float dc = 0;
-  const float kDc = 6.2831853f * 0.05f / PPG_FS;
-  bool dcInit = false;
-  uint32_t n = 0;
+ private:
+  PipelineConfig cfg_;
+  ppgnr::PpgDenoiser<ANC_NUM_REFS, ANC_TAPS, SG_HALF, HAMPEL_WINDOW> den_;
+  ppgnr::Sqi<PPG_FS, SQI_WINDOW_S, SQI_HOP_S> sqi_;
+  ppgnr::RawClipMonitor clip_;
+  AdaptivePeakDetector peaks_;
+  uint32_t n_ = 0;
+  bool ok_ = false, active_ = false;
 };

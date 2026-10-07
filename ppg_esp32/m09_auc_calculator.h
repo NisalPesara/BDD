@@ -1,53 +1,19 @@
-// m09_auc_calculator.h
 #pragma once
-#include <stdint.h>
+#include <math.h>
 
-class AucCalculator {
-public:
-  AucCalculator() { reset(); }
-
-  // Resets the area accumulator at the start of a new heartbeat
-  void reset() {
-    accumulated_area = 0.0f;
-    last_t_ms = 0;
-    last_ppg = 0.0f;
-    is_first_sample = true;
-  }
-
-  // Feeds a new sample into the integrator using the Trapezoidal rule
-  float process(uint32_t t_ms, float ppg) {
-    if (is_first_sample) {
-      last_t_ms = t_ms;
-      last_ppg = ppg;
-      is_first_sample = false;
-      return 0.0f;
+// Pulse AUC in ADC-count seconds. Not volume, velocity, or flow in mL/min.
+// Baseline is the SAME straight line between the two pulse onsets for every
+// sub-area. The segment must already have passed contact, gap and SQI checks.
+struct PulseAuc {
+  static float integrate(const float* ppg, int count, float fs, int from, int to) {
+    if (!ppg || count < 2 || !(fs > 0) || from < 0 || to >= count || to <= from) return NAN;
+    const float slope = (ppg[count - 1] - ppg[0]) / (count - 1);
+    double area = 0;
+    for (int i = from; i < to; ++i) {
+      const double a = ppg[i] - (ppg[0] + slope * i);
+      const double b = ppg[i + 1] - (ppg[0] + slope * (i + 1));
+      area += (a + b) * 0.5 / fs;
     }
-
-    // Convert time delta from milliseconds to seconds
-    float dt = (t_ms - last_t_ms) / 1000.0f;
-
-    // Trapezoidal Area = width * average height
-    // If you want to isolate just the pulsatile volume above the baseline, 
-    // ensure the 'ppg' signal passed here has already had its minimum trough value subtracted.
-    float area = dt * ((ppg + last_ppg) / 2.0f);
-    
-    // Only accumulate positive areas to prevent baseline dips from subtracting volume
-    if (area > 0) {
-      accumulated_area += area;
-    }
-
-    last_t_ms = t_ms;
-    last_ppg = ppg;
-
-    return accumulated_area;
+    return float(area); // signed: do not hide undershoot by clipping each trapezoid
   }
-
-  // Retrieve the final calculated area for the pulse
-  float get_auc() const { return accumulated_area; }
-
-private:
-  float accumulated_area;
-  uint32_t last_t_ms;
-  float last_ppg;
-  bool is_first_sample;
 };
