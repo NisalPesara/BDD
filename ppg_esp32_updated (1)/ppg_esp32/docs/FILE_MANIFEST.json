@@ -1,0 +1,234 @@
+{
+  "README.md": {
+    "bytes": 11060,
+    "sha256": "d78a35ebb8a555f148dd039acbe9466fec1bd82718a1dedabc139e717718edad"
+  },
+  "config.h": {
+    "bytes": 3881,
+    "sha256": "daa59a30afccf6af8919f1fe3d47ee6a549745f8420b2e0e413a7a78ca3e556f"
+  },
+  "docs/INPUT_PROVENANCE.json": {
+    "bytes": 387,
+    "sha256": "952acf24a063fa5b689fabcdc5f5edba301c100d886096c5f3ae4f33033690c5"
+  },
+  "docs/INTEGRATION_REVIEW.md": {
+    "bytes": 11448,
+    "sha256": "23d6c83ab2fe920b3df5ad0354167fe67ad5cd594caf828899e7b00da762f327"
+  },
+  "docs/MODULES_AND_OUTPUT.md": {
+    "bytes": 6517,
+    "sha256": "4037fbbe9789c9e624300a6831b3125fdeaf5ac96eb753b4b0b94855e2673b77"
+  },
+  "docs/SANITIZER_RESULTS.txt": {
+    "bytes": 1256,
+    "sha256": "142640c3a30df89f4b33e47d882e4ecfaae5778626bd01bce53f37ba406d4ed2"
+  },
+  "docs/TEST_RESULTS.txt": {
+    "bytes": 1256,
+    "sha256": "142640c3a30df89f4b33e47d882e4ecfaae5778626bd01bce53f37ba406d4ed2"
+  },
+  "docs/THIRD_PARTY_NOTICES.md": {
+    "bytes": 2189,
+    "sha256": "a54ccf95f01868d493c932a4c83b1595df0bfb423d14ae2645c9f6d456911453"
+  },
+  "docs/TOOLS_TEST_RESULTS.txt": {
+    "bytes": 253,
+    "sha256": "a601626fdee1ccd20f6944eef76c147b7e279cd50272854c0811b87d01fb6823"
+  },
+  "docs/VALIDATION.md": {
+    "bytes": 6732,
+    "sha256": "ca7bfc0e32c9b730e8ceada13fd8fb892b1948e39e12c82a26b5bef002fb3678"
+  },
+  "firmware.h": {
+    "bytes": 9164,
+    "sha256": "c14c2080ee03f622c746adddb85f1126784e20cb080924b5cc80779a881cc614"
+  },
+  "legacy/config.h": {
+    "bytes": 3837,
+    "sha256": "1cfa3454009e109221f0d58a8c61e5e46304798c740c7def8cc03439e272ca04"
+  },
+  "legacy/derivatives.h": {
+    "bytes": 935,
+    "sha256": "cb7a11606499a5f2c0242266d62b701a754f637aa11a16928332a7f5eca094e4"
+  },
+  "legacy/filter_coeffs.h": {
+    "bytes": 4959,
+    "sha256": "955be84fe38c209b981a40132f49c3045a18328b63fff32ef2661deb728f6780"
+  },
+  "legacy/m01_frequency_filters.h": {
+    "bytes": 3398,
+    "sha256": "018b99f3e5e8cf62e88955fa17b7bd8bb17fa184bdf9258950642cbf52c61141"
+  },
+  "legacy/m02_baseline_removal.h": {
+    "bytes": 1196,
+    "sha256": "4af150a7de77611897751f7f575e16914d489b665bd7073acd07c9c6c4cae48c"
+  },
+  "legacy/m03_moving_difference.h": {
+    "bytes": 673,
+    "sha256": "a5d97c8197dce4ce1b6fb46fb38f0c60dc5a391ad2de2f9db3ca8336f4e6b30d"
+  },
+  "legacy/m04_smoothing.h": {
+    "bytes": 607,
+    "sha256": "770d5a44e9caf3f9146ec59f74bbda87bc0d49cf679af797e41929a4c9aa8ca2"
+  },
+  "legacy/m05_amplitude_regularization.h": {
+    "bytes": 764,
+    "sha256": "975a6c78ab7fb772439c48b842b89ef0f8717b80f1d5f5e8f983d70143814ea5"
+  },
+  "legacy/m06_nlms_anc.h": {
+    "bytes": 1339,
+    "sha256": "7ee26e8ab7c43be32b5b4112ce20b94c1d7c10f17a8bdc6b5cae8a0a5ebc77d9"
+  },
+  "legacy/m06b_accel_relative.h": {
+    "bytes": 1721,
+    "sha256": "7551e29fb5a1afb080f240b2ccaecaa736479e0cec9d1a695befe9077cdbc457"
+  },
+  "legacy/m07_sqi.h": {
+    "bytes": 3544,
+    "sha256": "3c06d212bf6e674d23c51faa04017757239c9f11e9fa50a30d0101d11eb2a40c"
+  },
+  "legacy/m08_peak_detection.h": {
+    "bytes": 1731,
+    "sha256": "72629c6cda3166e22d31dd340d1adaa8597f565d83f0fb3ba43029c261e5fc81"
+  },
+  "legacy/pipeline.h": {
+    "bytes": 3952,
+    "sha256": "f7b871465c7b2f8ba847c7303745371c7dd3dc0622e09a2131a8481ad7fe6b82"
+  },
+  "legacy/wave_detection.h": {
+    "bytes": 14652,
+    "sha256": "216f8e777c3c84e368f5a1b63b47b426711cb3154f8ec7ba793088d4cc3d148e"
+  },
+  "m04_smoothing.h": {
+    "bytes": 1226,
+    "sha256": "aafb88509ffa06063f1daf60638d18d264b207b4056e7dc5054a0659fed2438c"
+  },
+  "m08_peak_detection.h": {
+    "bytes": 2068,
+    "sha256": "dda848bc0b942dd33e14c736e28b210f303a30f0d9ad86f3a3a00931b95061a7"
+  },
+  "m09_auc_calculator.h": {
+    "bytes": 833,
+    "sha256": "c9d1ba4e4358f853df4b677fe96e064cbb6baa5d9c039d681fbbbee4fe1a99df"
+  },
+  "measurement_context.h": {
+    "bytes": 2145,
+    "sha256": "89ec02c5f33cb97d246b6d805899698eb454722aca6572b5fcffe968aa7e07e9"
+  },
+  "nirs_adapter.h": {
+    "bytes": 752,
+    "sha256": "5e227dd257ae23b5f9f8e88625e92da24b4eddbc3cce8a6f7b620b5ea6d1d272"
+  },
+  "perfusion_monitor.h": {
+    "bytes": 2444,
+    "sha256": "3660fa3a27d7c657d8333fd7a573a2dc7181f6e016a948a74d3aa0696bf15ab5"
+  },
+  "pipeline.h": {
+    "bytes": 2866,
+    "sha256": "596882cfc57d747619e5f09ee4b14def48db03b11596cf9383a90b7560212262"
+  },
+  "platformio.ini": {
+    "bytes": 431,
+    "sha256": "62db908646c9e6fd50a2b448c80160849b413b7235eeb0e2f714dac69fe1225b"
+  },
+  "ppg_esp32.ino": {
+    "bytes": 165,
+    "sha256": "3d6b2cf34683ef83c1d2c6edd19b72abd38a119adaa689b84cd426fed9803aab"
+  },
+  "ppg_noise/ppg_anc.h": {
+    "bytes": 2905,
+    "sha256": "a954ff5109a3b501c510ad8b1ded06f3991ef22699f120f2a5c3ee9b1146ec6e"
+  },
+  "ppg_noise/ppg_biquad.h": {
+    "bytes": 4049,
+    "sha256": "cd55f65f43d88e58078bed17d3b4683c41feb62e8485114a2f68512400725966"
+  },
+  "ppg_noise/ppg_dc.h": {
+    "bytes": 1938,
+    "sha256": "3fa7ee76e8acb1ad4f167e2d7615712ae7f3767ebf44d075d7845e8093906ba4"
+  },
+  "ppg_noise/ppg_force.h": {
+    "bytes": 4578,
+    "sha256": "d26730ce94e613d5cbe82c86534891e46f2edcaaf5b9937517ce06682c70b85c"
+  },
+  "ppg_noise/ppg_noise.h": {
+    "bytes": 6392,
+    "sha256": "3d1d7a3c43b0fe288482056603f9e0d116299184275acc0b5fee818627c171fc"
+  },
+  "ppg_noise/ppg_savgol.h": {
+    "bytes": 3573,
+    "sha256": "7961c53ad7f0b626c6f287c13317f822831841b0ca49c975495d320242f6b554"
+  },
+  "ppg_noise/ppg_spike.h": {
+    "bytes": 2104,
+    "sha256": "ab3bd983b62c28dd61a1971c121ed6d721ed9c103be2c7a6fce8b32d3b677cb8"
+  },
+  "ppg_noise/ppg_sqi.h": {
+    "bytes": 7632,
+    "sha256": "38bb527830eff57eacdb3df06de08d4140eb2d534f058dde24c03199b66b589f"
+  },
+  "sensor_drivers.h": {
+    "bytes": 3490,
+    "sha256": "7e5fff26166ed007952e4feff3c2cd48757f5e36bb2193cedaf61273e37e581c"
+  },
+  "serial_logger.h": {
+    "bytes": 1075,
+    "sha256": "7eed6c065fb2da5f7a01521812b5e580a1de558e2ee7620eb9ee26034a506882"
+  },
+  "spo2_algorithm.h": {
+    "bytes": 3833,
+    "sha256": "39d85538a3215a9983cea69e3df9706c2f5a68c1365339f363f2347a28279c02"
+  },
+  "spo2_processor.h": {
+    "bytes": 2324,
+    "sha256": "6870915e470ddd549b1e545d52d8b77a8150afa03f9d50796b4bd4410057f2ae"
+  },
+  "spo2_table.h": {
+    "bytes": 1013,
+    "sha256": "ad12736b9a972f9d4e212d6c4525af4ceca69fa890c631f011c3d736229b8031"
+  },
+  "src/main.cpp": {
+    "bytes": 189,
+    "sha256": "dfd1352bac8ba4bed2b7ef7f0af89cbb34b4672f6af6e9fb3d7e332ed0bfa223"
+  },
+  "tests/run_tests.py": {
+    "bytes": 1371,
+    "sha256": "ce890d48c5379ffc2832cd423b743527b118da106ecfe68a767511d0e5c1f6dc"
+  },
+  "tests/stubs/Arduino.h": {
+    "bytes": 992,
+    "sha256": "cdd2e70f16d312a64f8bb30d8be51e6ae9ff8278c8e000825bf041e1368af24f"
+  },
+  "tests/stubs/Wire.h": {
+    "bytes": 1722,
+    "sha256": "b652ea3135eb15378ae14093d70dc09aff78836e258600ce040c2a93cba314c9"
+  },
+  "tests/stubs/esp_timer.h": {
+    "bytes": 99,
+    "sha256": "9a4b93463a52605e549bef4beaa8f43d24029f5f5aa3a5315b7c7b3315d15678"
+  },
+  "tests/test_core.cpp": {
+    "bytes": 7676,
+    "sha256": "8c70337bcff0782c475aa9f6c2523a7009210ca10d2f00b00f8dd17aa8d35d62"
+  },
+  "tests/test_firmware.cpp": {
+    "bytes": 2610,
+    "sha256": "1c2c7e40e1b347c0654767034326cb6b4ec8faf60b5e65db6f85dbde90bf4787"
+  },
+  "tools/capture.py": {
+    "bytes": 1682,
+    "sha256": "f2e77c029b7a628e8d08885aafbc772f3c6b5d2a3f09ce49c711211f9dce311b"
+  },
+  "tools/replay.cpp": {
+    "bytes": 2479,
+    "sha256": "c0e98990f278596f0fb3ae25ba35346ff8634c6b7a4d1100dd35630febd68920"
+  },
+  "tools/split_records.py": {
+    "bytes": 1589,
+    "sha256": "144ee966f3bee070f4fe4a12196fbcdd1726190fa0691ac86b0434e51a8708d4"
+  },
+  "wave_detection.h": {
+    "bytes": 9454,
+    "sha256": "11e6632cd4cd58e0101a9aec909945de6b658240edb3df3d40a132e215a6822d"
+  }
+}
