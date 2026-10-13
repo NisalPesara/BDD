@@ -1,117 +1,172 @@
-# Updated ESP32-S3 limb PPG research firmware
+# ESP32 PPG pipeline + limb blood-flow assessment (SpO2, NIRS, motion, pressure)
 
-This folder replaces `BDD/ppg_esp32`. Open **ppg_esp32.ino** in Arduino IDE, or open this folder as a PlatformIO project. Start with the wiring table below, then read [the integration review](docs/INTEGRATION_REVIEW.md).
+Same layout as the old `ppg_esp32`: one sketch folder, `ppg_esp32.ino` holds `setup()` / `loop()` /
+`handleSample()`, and every method is a separate header next to it (no sub-folders for libraries).
+Sources: Park et al. 2022 *Front. Physiol.* 12:808451 + pyPPG, the **minor-noise** libraries (`ppg_*.h`),
+**updated_libraries-manuth** (wave detection, NLMS, two-ADXL345 config) and the useful fixes from **4.37**.
+See `CHANGES_AND_ANALYSIS.md` for what changed and the full SpO2 / smoothing / derivative analysis.
 
-The update integrates the supplied `Libraries`, `PPG-SQI-Improved`, `minor-noise.zip` and `text1.txt` ideas into one executable acquisition and processing path. The uploaded BDD archive was the baseline: the live GitHub folder could not be retrieved for a current-commit comparison. No Claude URL was present in the message, text, source files, notebook or PDF links inspected.
+> Research prototype, not a validated medical device. It shows whether **pulsatile** blood flow reaches
+> the limb compared with a baseline; it cannot measure flow in mL/min. Never use it alone to decide
+> tourniquet application or release.
 
-**Purpose:** record distal optical pulsatility and pressure/motion context, and compare accepted pulse features with a deliberately captured baseline. These measurements do not establish adequate limb blood flow, measure flow in mL/min, or determine blood-flow direction. This is research firmware, not an automatic tourniquet controller. Do not use its trends to decide tourniquet application or release.
+## Hardware and wiring (current)
+Board **ESP32 Dev Module** (classic ESP32). Only two sensors are connected now, both on the same I2C bus:
 
-## What is connected
-
-Assumption: **ESP32-S3 DevKitC-1 with N16R8 module**, MAX30102, two ADXL345s and two band FSRs. If your board differs, revise the pin mapping before connecting it.
-
-| Function | ESP32-S3 connection | Details |
+| Sensor | Connection | I2C address |
 |---|---|---|
-| I2C SDA | GPIO 8 | MAX30102 and both ADXL345s share the bus |
-| I2C SCL | GPIO 9 | 400 kHz; pull-ups to 3.3 V |
-| MAX30102 | I2C 0x57 | RED + IR, paired FIFO reads |
-| Probe ADXL345 | I2C 0x53 | SDO to GND; CS to 3.3 V |
-| Reference ADXL345 | I2C 0x1D | SDO to 3.3 V; CS to 3.3 V |
-| Band FSR 1 | GPIO 4 | Buffered divider output, ADC1 |
-| Band FSR 2 | GPIO 5 | Buffered divider output, ADC1 |
-| Analog PPG reservation | GPIO 6 | Reserved only; no analog PPG driver selected |
-| NIRS analog channel 1 reservation | GPIO 1 | Optional external AFE voltage output |
-| NIRS analog channel 2 reservation | GPIO 2 | Optional external AFE voltage output |
-| NIRS enable reservation | GPIO 10 | Not driven: AFE enable polarity is unknown |
-| USB | GPIO 19/20 | Retained for native USB |
+| MAX30102 | SDA -> GPIO 22, SCL -> GPIO 23, VIN -> 3.3 V, GND | 0x57 |
+| ADXL345 | SDA -> GPIO 22, SCL -> GPIO 23, **CS -> 3.3 V** (I2C mode), **SDO / "AD0" -> GND** | 0x53 |
 
-The ESP32-S3 has no GPIO22-25. Avoid the flash/PSRAM pins, particularly GPIO26-37 on this module. All grounds must be common. Use the supply voltage required by each **breakout board**; a bare MAX30102 chip is not a 3.3 V-only breakout. MCU inputs and I2C pull-ups must stay within the board's permitted levels.
+No other GPIO is used. FSR, a second (band) ADXL345 and NIRS are prepared but **commented out** in `config.h`
+and `ppg_esp32.ino`; their reserved pins for later are FSR 34/35, NIRS photodiodes 32/33, NIRS LEDs 25/26,
+band ADXL345 0x1D (SDO -> 3.3 V). To add one: set its switch (`USE_FSR 1`, `NUM_ACCEL 2`, `NIRS_MODE 1`) and
+uncomment its block - the build stops with a clear `#error` if a needed line is still commented.
+If an ESP32-S3 is selected the build stops too: the S3 has no GPIO 22/23.
 
-FSR convention: 3.3 V -> FSR -> ADC node -> 10 kOhm -> GND. Use an appropriate buffer/RC filter. Firmware uses `analogReadMilliVolts()`, not a false assumption that ADC code 4095 equals 3.3 V. The calculated output is estimated conductance in microSiemens, not calibrated force or pressure. The present ADC saturation gate starts at 3090 mV; design the divider to keep its useful output below that range and calibrate your board.
+## How to use
+1. Copy the folder `ppg_esp32/` into your sketchbook (the folder name must match `ppg_esp32.ino`).
+2. Arduino IDE: install **esp32 by Espressif**, select Board **ESP32 Dev Module**.
+   **No extra libraries** are needed any more (the MAX30102 and ADXL345 are driven directly with `Wire`).
+3. `config.h` is already set for MAX30102 + one ADXL345 (`NUM_ACCEL 1`, `USE_FSR 0`, `NIRS_MODE 0`). Check `MAX_LED_CURRENT_CODE`.
+4. Upload, open the Serial Monitor at **460800** baud.
+5. Put the probe on in a known **unrestricted** condition and keep the limb still. After warm-up (~6 s) send
+   **b**: the next 10 accepted still pulses become the fixed **reference** (only **b** captures it: `AUTO_BASELINE 0`,
+   so a restricted condition can never silently become "normal"). The LED current is locked from **b** on.
+   Until the reference exists the 10 LEDs stay off (UNKNOWN).
+6. Watch the 10 LEDs / `BloodFlowLevel` (relative pulse level, below). The report mode (**p**) prints x, why it is
+   UNKNOWN when it is, and the supporting diagnostics.
+7. Optional (off by default, `FL_TWO_POINT_CAL 1` in `config.h`): **t** / **f** capture a tight / free value and the
+   LEDs use 8 equal bands between them; **c** clears it.
 
-## Bring-up
+Serial commands: **b** reference (flow + NIRS), **r** reset, **p** cycle report / Serial-Plotter / Teleplot, **h** help.
 
-1. Extract the ZIP. Keep the entire `ppg_esp32` folder together. Back up the old folder, then replace it with this folder. Do not copy only the `.ino`.
-2. Check `config.h`: board pins, FSR divider, `NUM_ACCEL`, pulse polarity, and sensor count. Default `NUM_ACCEL=2`; use 1 or 0 only when those sensors are actually absent. A missing configured accelerometer makes motion quality invalid.
-3. In Arduino IDE select **ESP32S3 Dev Module**, USB CDC enabled, 16 MB flash, appropriate 16 MB partition, and OPI PSRAM for N16R8. Open `ppg_esp32.ino`. Only ESP32 Arduino core/Wire are needed; no MPU6050, Adafruit or SparkFun sensor library is required by this version.
-4. Or, in VS Code / PlatformIO, open this folder and run `pio run -e esp32-s3-n16r8`, then `pio run -t upload`. The configuration pins Espressif32 6.9.0 for reproducibility; a real target build still needs to be performed on your system.
-5. Open Serial Monitor at 460800 baud. Send `h` to reprint CSV headers. Native USB may ignore the numeric baud rate. Wait for filter settling and accepted pulses; startup is not instantaneous.
-6. Inspect raw IR/RED and the upward systolic pulse. Change `INVERT_SIGNAL` if needed. Tune LED current and placement on recorded data. `MAX_LED_CURRENT_CODE=100` means register code 100, approximately **20 mA**, not 100 mA. Automatic gain changes are intentionally absent because they invalidate amplitude comparisons.
-7. With the probe fixed and a stable intended baseline condition, send **b**. Ten consecutive accepted pulse reports establish a fixed median baseline. Send **r** to reset filters and baseline. Reboot after correcting an initial sensor-setup failure.
-8. For research recordings set `STREAM_EVERY_N=1` and record every 125 Hz frame. The default 5 produces a 25 Hz preview stream while internal processing remains at 125 Hz. Decimated preview data cannot reproduce the original derivative pipeline.
+## Relative optical pulse-strength index x (10 LEDs, `m14_flow_level.h`)
+x tracks how the PPG pulse changes during limb-circulation restriction, relative to the **b** reference.
+**It is not a blood-flow percentage**: x = 0.45 means the normalised optical pulse is 45 % of the reference pulse.
+It does not show how much blood flow remains, or that a tourniquet / bandage is safe.
 
-No firmware-upload or hardware tests were possible in the preparation environment. See [validation](docs/VALIDATION.md) for exactly what was tested.
+| Step | Calculation |
+|------|-------------|
+| per accepted **still** pulse | A = systolic peak above the pulse baseline; D = mean raw-IR DC over the same pulse; PI = 100 A / D |
+| reference (**b**) | baselineAmplitude = median A, baselinePI = median PI of 10 still pulses; pulse shape frozen; LED current locked |
+| per NEW pulse | relativeAmplitude = A / baselineAmplitude, relativePI = PI / baselinePI (unclipped) |
+| index | target = clamp(relativePI, 0, 1); x = target (first), then x = 0.75 x + 0.25 target (once per pulse) |
+| LEDs | level = min(10, 1 + floor(10 x)), hysteresis 0.02; LEDs 1..level lit - **more LEDs = stronger pulse** |
+| invalid data | clipping, warm-up, motion (large **and** small) or pressure change: x is paused; lasting > 1 s (`FL_INVALID_GRACE_S`) -> UNKNOWN. Afterwards only a pulse that **started** after the invalid stretch restores a level |
+| UNKNOWN | level 0, **all LEDs off** (no blinking): no reference, probe off, sensor failure, stopped acquisition (at once), invalid data > 1 s, or the newest accepted pulse ended > 5 s ago (the reason is reported, e.g. the SQI failure type) |
 
-## Recommended flow
+A missing pulse is shown as UNKNOWN, never as level 1 / "zero". The reference is cleared by **r**, probe removal,
+a sensor re-initialisation or an LED-current change (send **b** again). Example: reference A = 1000, D = 100000
+(PI 1 %); now A = 450 (PI 0.45 %) -> relativePI 0.45 -> x approaches 0.45 -> level 5.
+Diagnostics, reported but **not part of x**: `relativeAmplitude` (= relativePI x relativeDC), `relativeDC`,
+`relativeAreaPI` (area-based strength; its ratio to relativePI is a consistency check - a disagreement is reported,
+never averaged into x), `relativeSlopePI`, crest / width ratios, `hrRatio`, `pulseDetectionRate`, `amplitudeCV`,
+`templateCorrelation`. Unavailable: -1 (-2 for the correlation). Full parameter roles: **PULSE_INDEX_DESIGN.md**.
 
-```mermaid
-flowchart TD
-  A["MAX30102: paired IR and red, 125 Hz"] --> B["FIFO, range and contact checks"]
-  B --> C["IR: Hampel, DC removal, high-pass"]
-  M["ADXL345 references"] --> D["Matched delay and filters; optional NLMS"]
-  C --> D
-  D --> E["Low-pass and aligned SG derivatives"]
-  E --> F["SQI, peaks, complete-pulse features"]
-  P["FSR stability and motion checks"] --> F
-  F --> G["Pulse trends against fixed baseline"]
-  B --> H["Raw red/IR: matched low-pass, 125 to 25 Hz"]
-  H --> I["Four-second SpO2 estimate; quality gate"]
+**Teleplot channels** (exactly these): `PPG`, `PPG_noANC`, `VPG`, `APG`, `SQI`, `RelMotion`, `HandMotion`, `Moving`
+(per sample); `BloodFlowLevel` = the LED level 0..10 (10 Hz); `relativeAmplitude`, `relativePI`, `PulseIndex` (= x),
+`pulseDetectionRate`, `amplitudeCV`, `templateCorrelation`, `IR_DC` (1 Hz).
+`TELEPLOT_SUPPORT 1` adds `relativeDC`, `relativeAreaPI`, `relativeSlopePI`, `hrRatio`, `areaVsPI`, `supportAgreement`.
+**Viewer:** `python tools/flow_viewer.py` (close Teleplot first) draws BloodFlowLevel as a step graph with a shaded
+band per level and a separate UNKNOWN row, and below it relativeAmplitude, relativePI and PulseIndex x together
+(`--demo` without a board).
+
+## Data flow
+```
+MAX30102 IR (125 Hz) -> tissue check -> Hampel spike removal -> DC removal (DC kept for PI) -> high-pass 0.15 Hz
+      -> [NLMS motion cancellation, refs from both ADXL345 through the same delay + high-pass]  (USE_ANC)
+      -> low-pass 10 Hz -> Savitzky-Golay smoothing + VPG + APG (+ JPG)                      = clean PPG
+clean PPG -> 0.5 Hz detection copy -> SQI (m07) + systolic peaks (m08)
+          -> wave_detection.h: onset/peak/notch/a-e per pulse + features + AUC (m09)
+          -> m10: ratios to baseline -> GOOD / REDUCED / POOR / NO PULSE
+          -> m14: relative pulse-strength index x -> 10 LEDs + Teleplot BloodFlowLevel
+ADXL345 x2 + FSR x2 -> m12: motion gate + band-pressure-stable gate (bad samples never become pulses)
+MAX30102 RED + IR raw -> Hampel -> low-pass 6 Hz -> /5 = 25 Hz -> 4 s window, 1 s hop -> corrected Maxim SpO2 (m11)
+NIRS LED1 / LED2 / dark (10 frames/s) -> dark-subtracted light -> dOD -> modified Beer-Lambert -> dHbO2, dHHb (m13)
 ```
 
-| Setting | Default |
-|---|---|
-| MAX30102 conversions | 1000/s, 118 us pulse width, average 8 |
-| Effective FIFO pair rate | 125 Hz; `dt=0.008 s` |
-| Hampel | 5 samples, threshold 5 x robust sigma |
-| DC tracker / high-pass | 0.05 Hz / 2nd-order 0.15 Hz |
-| Low-pass | 4th-order 10 Hz Butterworth |
-| SG smoother and derivatives | 15 samples, cubic, 120 ms window |
-| Known centered-filter delay | 9 samples = 72 ms, plus IIR phase delay |
-| SQI | 5-second window, 1-second hop, autocorrelation near 25 Hz |
-| ANC | Off initially; six available axes, 8 taps, mu 0.01 when enabled |
-| SpO2 branch | Matched 6 Hz low-pass, average/decimate by 5 |
-| SpO2 analysis | 100 samples at 25 Hz, 4 seconds, update every 1 second |
+## How blood flow is judged (peak detection + derivative)
+Per accepted pulse (onset -> systolic peak -> notch -> next onset), compared with the baseline median:
 
-The SG delay is 7 samples, the Hampel delay is 2. Subtracting 72 ms corrects only those known delays. It does not undo the frequency-dependent IIR delay or prove that a detected notch is a physiological fiducial.
-
-## Measurements and interpretation
-
-| Output | Why it is included | Limitation |
+| Feature | From | Meaning for the limb |
 |---|---|---|
-| Pulse presence and interval | Whether repeatable pulsatility is detectable | Absence may reflect poor measurement, weak pulsatility or altered perfusion |
-| Amplitude in ADC counts | Within-setup pulse-strength trend | Depends on LED drive, contact, tissue, placement and filters |
-| Pulse PI (%) | 100 x pulse amplitude / raw DC level | This implementation's definition; not interchangeable with a commercial monitor |
-| Pulse area / AUC | Integrates the complete pulse shape | Count-seconds, not blood volume or flow |
-| Systolic/diastolic area | Shares one baseline with total AUC | Available only when a notch/inflection is detected |
-| Crest time and 50% pulse width | Morphology and timing changes | Causal filtering and limb location affect both |
-| VPG/APG and optional a-f indices | Exploratory morphology | Derivative sign does not indicate flow direction; not used as a clinical decision rule |
-| FSR conductance and stability | Pressure-related confounding | Requires calibration to report force, and area/contact modeling to infer pressure |
-| Raw accelerometers | Motion context and future ANC tuning | Two devices are approximately sampled together, not hardware synchronized |
-| SpO2 estimate | Additional experimental optical channel | Unvalidated algorithm/site; not tissue oxygenation or proof of perfusion |
+| Systolic amplitude | peak detection | strength of each pulse |
+| Perfusion index | amplitude / DC | strength corrected for light level |
+| Pulse area (AUC) | m09, whole pulse | pulse volume (less sensitive to one noisy point) |
+| Max upstroke slope | VPG (1st derivative) maximum | how fast blood volume rises = arterial inflow |
 
-The original stiffness/aging index outputs are removed from the active reporting path. Normalizing pulse amplitude before measuring amplitude or AUC is also removed. `m04_smoothing.h` remains as a tested moving-average alternative; it is not cascaded with SG in the default pipeline.
+Flow score = median of the four ratios. **GOOD** >= 0.70, **REDUCED** 0.30-0.70, **POOR** < 0.30 (confirmed over
+3 pulses), **NO PULSE** = no acceptable pulse for 8 s while optical signal, pressure and motion are fine.
+Also watch: crest time grows and the dicrotic notch disappears as inflow drops.
 
-`REDUCED_PULSE_TREND` means amplitude and PI are below 50% of the chosen baseline for three accepted pulses. It is an adjustable research rule, not a diagnosis. `PULSE_DETECTED` means a pulse was detected, not that circulation is adequate. Poor quality remains explicit; zero or an old value is not substituted for unavailable measurements.
-
-## FSR roles, ANC and NIRS
-
-The supplied project describes **both FSRs at the compression band**. They gate pressure stability, but low band pressure does not mean the optical probe is detached. Leave `CONTACT_FSR_INDEX=-1`. Set it to 0 or 1 only if that FSR is physically moved to the optical probe and its thresholds are calibrated. Optical count thresholds alone cannot reliably establish contact in every lighting condition.
-
-ANC is integrated but defaults to off. One three-axis sensor can provide references; two are not mathematically required. With one sensor the other three channels are zero. This version uses six absolute, DC-removed axes rather than unvalidated integrated relative velocity. Align the reference board axes with `REFERENCE_AXIS_IDX/SIGN`, measure rest noise, then set `ANC_MIN_ENERGY`. Motion still gates feature reporting even when ANC is on. A nicer-looking waveform is not evidence that all motion artifact was removed.
-
-**NIRS is not fully implemented because its hardware was unspecified.** GPIO1/2 and GPIO10 are reserved. `NIRS_MODE=1` enables raw logging only for an external AFE that already provides two safe, continuous analog outputs. An LED-multiplexed photodiode circuit, ADS1115, AFE4404, UART instrument, or commercial oximeter needs a different adapter. Wavelengths, source-detector distance, LED timing, dark/ambient subtraction, channel calibration and a validated model are required before deriving HbO2/HHb or StO2. MAX30102 SpO2 must not be relabeled as NIRS tissue saturation.
-
-## Recording and desktop checks
-
-```text
-python -m pip install pyserial
-python tools/capture.py --port COM5 --output session.csv
-python tools/split_records.py session.csv --out session_tables
-python tests/run_tests.py
+## Output (Name: value unit)
 ```
+==================== PULSE #30 ====================
+Heart rate: 75.642 bpm
+Systolic amplitude: 864.43 a.u.
+Perfusion index: 0.72201 %
+Pulse width / PW50: 0.13363 s
+Pulse area: 163.64 a.u.*s
+...                                   (all 18 features of the requested list + upstroke slope)
+(b-c-d-e)/a aging index: -3.7063 ratio
+Dicrotic notch: present
+-- Blood flow vs baseline --
+Amplitude ratio: 0.97278 x baseline
+Flow score: 0.97286 x baseline
+Flow status: GOOD FLOW
+SpO2: 97 %
+```
+`n/a` = could not be measured on this pulse (e.g. Delta T needs a real diastolic peak). The status block every
+second adds signal quality, heart rate, SpO2, band forces, motion energy and NIRS dHbO2 / dHHb / dHbT.
+`tools/receive_from_esp32.py COM5 120` records everything and writes `session_pulses.csv` / `session_status.csv`.
 
-The capture tool prints status lines and accepts `b`, `r`, `h` followed by Enter. `Ctrl+C` closes the file. Use a different COM port if necessary. The test runner requires g++/MinGW; it builds in a temporary folder. For sanitizer checks on a restricted Linux container use `ASAN_OPTIONS=detect_leaks=0 python tests/run_tests.py --sanitize` (address and undefined-behavior checks remain enabled).
+## Files
+| File | What | Origin |
+|---|---|---|
+| `ppg_esp32.ino` | main sketch: sensors, per-sample flow, reports | old, rewritten |
+| `config.h` | all pins (incl. NIRS), rates, thresholds | old + manuth + 4.37 |
+| `pipeline.h` | the processing chain | old, rebuilt on the libraries |
+| `ppg_biquad.h ppg_dc.h ppg_spike.h ppg_savgol.h ppg_anc.h ppg_force.h ppg_sqi.h ppg_noise.h` | noise-removal libraries | minor-noise (hardened 4.37 copies) |
+| `m01_frequency_filters.h` + `filter_coeffs.h` | Park 2022 filter tables (optional `PPG_BANDPASS`) | old |
+| `m02` baseline, `m03` moving difference, `m05` amplitude regularisation (kept, unused), `m06b` accel references | | old |
+| `m04_smoothing.h` | moving average (O(1), ms -> samples explained) | old + 4.37 |
+| `derivatives.h` | Savitzky-Golay and central-difference derivatives, aligned | new |
+| `m06_nlms_anc.h` | NLMS with energy gate / leak | manuth `NLMS-ANC.h` -> `ppg_anc.h` |
+| `m07_sqi.h` | SQI with fail bitmask | `ppg_sqi.h` + config |
+| `m08_peak_detection.h` | prominence + adaptive refractory peaks | 4.37 |
+| `wave_detection.h` | per-pulse fiducials and features | manuth + 4.37 + tangent onset |
+| `m09_auc_calculator.h` | AUC: segment (linear baseline) + streaming `AucCalculator` | your AUC code + 4.37 |
+| `m10_perfusion_monitor.h` | baseline, ratios, flow status | new (idea from 4.37) |
+| `m14_flow_level.h` | relative pulse-strength index x, LED level, UNKNOWN handling, diagnostics | new |
+| `spo2_algorithm.h`, `m11_spo2_processor.h` | corrected Maxim SpO2, 25 Hz processor | text1 + fixes |
+| `m12_measurement_context.h` | FSR pressure + motion gates | 4.37 |
+| `m13_nirs.h` | NIRS LED sequencing + Beer-Lambert | new |
+| `sensor_drivers.h`, `serial_logger.h` | Wire drivers (FIFO bursts), non-blocking output | 4.37 |
+| `test/` | desktop tests (`sh test/run_tests.sh`) | |
+| `tools/` | `gen_coeffs.py` (old), `receive_from_esp32.py` (new parser), `flow_viewer.py` (level graph), `calibrate.py` (obsolete) | |
 
-Full raw recordings can be replayed through the same C++ pipeline with `tools/replay.cpp`; see its build/run comment. The replay rejects preview-only recordings and resets on epoch/timing gaps.
+## Tests (desktop, no ESP32 needed)
+`sh test/run_tests.sh` (g++). The end-to-end test compiles the real `ppg_esp32.ino` against simulated
+MAX30102 / ADXL345 / FSR / NIRS hardware and runs: no probe -> normal flow ('b' reference) -> motion ->
+50 % occlusion -> 15 % -> full occlusion -> release -> 400 ms loop stall (FIFO overflow) -> probe removed.
+Every status was reported correctly (GOOD 51/51, MOTION 5/5, REDUCED 40/40, POOR 41/41, NO PULSE 10/10,
+NO SIGNAL 3/3, no-baseline-after-reseat 16/16); SpO2 97 % for a simulated R = 0.60; NIRS returned the simulated
+-12 / +9 uM; injected 25 000-count glitches were removed (unit test: 0.07 counts residual error vs 265 without the Hampel stage). Also clean under AddressSanitizer/UBSan and in C++11 mode.
+The same run checks the LED level per phase (full 10, half 5, 15 % -> 2, missing pulse / motion / no reference /
+FIFO restart -> UNKNOWN), the LED-current lock, and in Teleplot mode that exactly the 16 channels above are sent.
+Unit tests T9-T13 cover x itself (equation, all ten levels + hysteresis both ways, DC / HR / shape changes, trend
+vs noise, motion / clipping / SQI / stale / sensor cases, real-pipeline runs); `test/agc_test.cpp` the LED-current
+lock. Results and open limitations: PULSE_INDEX_DESIGN.md.
 
-See [CSV and modules](docs/MODULES_AND_OUTPUT.md), [integration review](docs/INTEGRATION_REVIEW.md), and [hardware validation steps](docs/VALIDATION.md). `legacy/` contains the original headers for comparison only; the active firmware does not include them.
+## Important caveats
+- **Not compiled for or run on the ESP32 here** (no ESP32 toolchain was reachable). Desktop builds use stubs of
+  the Arduino API. Do a first upload and check the boot lines (`MAX30102 found`, both ADXL345 found).
+- On an S3 the I2C pins are now **8 / 9** because GPIO 22/23 do not exist on that chip. Re-wire, or change `config.h`.
+- `MAX_LED_CURRENT_CODE 0x24` (7.2 mA, old value). On a limb/toe site you may need more (watch `Raw IR` and
+  `SENSOR SATURATED`).
+- Thresholds (SQI, motion energy, FSR slope, flow ratios) are starting values from simulation: tune on recordings.
+- SpO2 uses Maxim's fingertip calibration; NIRS uses literature extinction coefficients, DPF = 6 and 3 cm spacing.
+  Both are uncalibrated trends until compared with reference instruments.
+- `Inflection point area ratio` is now diastolic / systolic area (A2/A1, Wang 2009). The old code printed the inverse.
+- Large-artery stiffness index and the SDPTG aging index are fingertip indices: exploratory on a limb.

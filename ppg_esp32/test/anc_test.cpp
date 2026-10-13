@@ -34,4 +34,4 @@ static void run(int scen){
   }
   printf("  scenario %d (%s): ANC off %.3f -> ANC on %.3f\n",scen,scen==1?"artifact ~ relative velocity":"artifact ~ absolute finger accel",corr(y0,yr),corr(y1,yr));
 }
-int main(){ printf("ANC_MODE=%d (%s), refs=%d, taps=%d\ncorrelation with motion-free signal, t=90-110 s:\n",ANC_MODE,ANC_MODE?"REL9":"ABS6",ANC_NUM_REFS,ANC_TAPS); run(1); run(2); }
+int main(){ printf("ANC_MODE=%d (%s), refs=%d, taps=%d\ncorrelation with motion-free signal, t=90-110 s:\n",ANC_MODE,ANC_MODE==2?"REL6":ANC_MODE==1?"REL9":"ABS6",ANC_NUM_REFS,ANC_TAPS); run(1); run(2); }

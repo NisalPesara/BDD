@@ -1,48 +1,51 @@
+// METHOD 4 - Moving-average smoothing (pyPPG sm_wins idea)
+//
+//  ms = the length of the averaging window in TIME. It is converted to samples with
+//       w = round(ms * fs / 1000)       e.g. fs = 125 Hz (dt = 8 ms):
+//          40 ms ->  5 samples  first spectral null 25.0 Hz, delay 2 samples (16 ms)
+//          80 ms -> 10 samples  first null 12.5 Hz,          delay 4.5 samples (36 ms)
+//         120 ms -> 15 samples  first null  8.3 Hz,          delay 7 samples (56 ms)
+//         200 ms -> 25 samples  first null  5.0 Hz,          delay 12 samples (96 ms)
+//  A pulse at 60-120 bpm has useful harmonics up to ~8-10 Hz (the dicrotic notch lives there).
+//  A 120-200 ms box already flattens the notch and lowers the systolic peak, so it distorts
+//  peak/valley timing. 40 ms (odd, 5 samples) removes sample-to-sample noise left after the
+//  10 Hz low-pass with almost no distortion -> recommended (SM_PPG_MS in config.h).
+//  The default pipeline uses Savitzky-Golay (ppg_savgol.h) instead, which smooths like a
+//  ~120 ms window but keeps peak height; this moving average is the simple alternative.
+//
+//  Running sum: O(1) per sample; an exact re-sum once per lap removes float drift.
 #pragma once
 #include <math.h>
 
-template <int MAXW = 64>
-class MovingAverage {
-  static_assert(MAXW >= 1, "MAXW must be >= 1");
+struct MovingAverage {
+  static const int MAXW = 64;
 
-public:
-  // Returns the window length (samples) actually used, so the caller can
-  // detect clamping (w == MAXW) or collapse (w == 1).
+  // Returns the window length actually used (clamped to 1..MAXW).
   int begin(int fs, int ms) {
     long n = lroundf(ms * fs / 1000.0f);
-    w_ = (n < 1) ? 1 : (n > MAXW ? MAXW : (int)n);
+    w = (n < 1) ? 1 : (n > MAXW ? MAXW : (int)n);
     reset();
-    return w_;
+    return w;
   }
-
-  void reset() {
-    idx_ = filled_ = 0;
-    sum_ = 0.0f;
-    for (int i = 0; i < MAXW; i++) buf_[i] = 0.0f;
-  }
+  void reset() { idx = filled = 0; sum = 0.0f; for (int i = 0; i < MAXW; i++) buf[i] = 0.0f; }
 
   float process(float x) {
-    if (filled_ < w_) {            // warm-up: window not yet full
-      sum_ += x;
-      ++filled_;
-    } else {                       // steady state: newest in, oldest out
-      sum_ += x - buf_[idx_];
+    if (filled < w) { sum += x; ++filled; }
+    else            { sum += x - buf[idx]; }
+    buf[idx] = x;
+    if (++idx >= w) {                       // one lap done: exact re-sum (bounds rounding drift)
+      idx = 0;
+      float s = 0.0f;
+      for (int i = 0; i < filled; i++) s += buf[i];
+      sum = s;
     }
-    buf_[idx_] = x;
-
-    if (++idx_ >= w_) {            // one full lap completed
-      idx_ = 0;
-      float s = 0.0f;              // exact re-sum: bounds rounding drift
-      for (int i = 0; i < filled_; i++) s += buf_[i];
-      sum_ = s;
-    }
-    return sum_ / filled_;
+    return sum / filled;
   }
 
-  int window() const { return w_; }
+  int   window() const { return w; }
+  float delaySamples() const { return 0.5f * (w - 1); }   // group delay of a causal box filter
 
-private:
-  float buf_[MAXW];
-  float sum_ = 0.0f;
-  int w_ = 1, idx_ = 0, filled_ = 0;
+  float buf[MAXW];
+  float sum = 0.0f;
+  int   w = 1, idx = 0, filled = 0;
 };

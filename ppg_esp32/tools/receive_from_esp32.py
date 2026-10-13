@@ -1,28 +1,106 @@
 #!/usr/bin/env python3
 """
-Record the purified PPG streamed by the ESP32 and save it as CSV for your
-wave-properties (pyPPG / own) code.
-    pip install pyserial pandas
-    python receive_from_esp32.py COM5 60        # port, seconds   (Linux: /dev/ttyUSB0)
+Record the ESP32 output and turn the "Name: value unit" reports into CSV tables.
+
+    pip install pyserial
+    python receive_from_esp32.py COM5 120                 # port, seconds  (Linux: /dev/ttyACM0)
+    python receive_from_esp32.py COM5 120 --baseline      # also send 'b' after 15 s (capture baseline)
+    python receive_from_esp32.py --parse session_raw.txt  # only convert an existing log
+
+Output files (prefix 'session' by default):
+    session_raw.txt     everything the board printed
+    session_pulses.csv  one row per PULSE REPORT  (all features, flow ratios, flow status, SpO2)
+    session_status.csv  one row per STATUS block  (flow status, signal quality, HR, SpO2, FSR, motion, NIRS)
+    session_plot.csv    plotter-mode lines (PPG, VPG/10, APG/100, Beat, SQI) if the board was in 'p' mode
 """
-import sys, time, serial, pandas as pd
+import argparse, csv, re, sys, time
 
-port = sys.argv[1]; secs = float(sys.argv[2]) if len(sys.argv) > 2 else 60
-ser = serial.Serial(port, 460800, timeout=1)
-rows, t0 = [], time.time()
-while time.time() - t0 < secs:
-    line = ser.readline().decode(errors="ignore").strip()
-    if not line or line.startswith("#"): continue
-    p = line.split(",")
-    if len(p) != 8: continue
-    try: rows.append([float(v) for v in p])
-    except ValueError: pass
-df = pd.DataFrame(rows, columns=["t_ms","ppg","vpg","apg","jpg","sqi_good","beat","bpm"])
-df.to_csv("esp32_ppg_clean.csv", index=False)
-print(f"saved {len(df)} samples -> esp32_ppg_clean.csv  ({(df.sqi_good==1).mean()*100:.1f}% flagged good)")
+LINE = re.compile(r"^([^:#]+):\s*(\S+)(?:\s+(.*))?$")
 
-# ---- feed your detector: only keep good-quality samples, keep 125 Hz timing ----
-# signal.v  = df.ppg.values      (already band-pass filtered + smoothed on the ESP32)
-# signal.fs = 125
-# If you reuse the pyPPG notebook, either skip its preprocessing (assign signal.ppg / vpg /
-# apg / jpg from the CSV columns) or accept a second, mild filtering pass.
+
+def parse(lines):
+    pulses, status, plot = [], [], []
+    cur, kind = None, None
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("==================== PULSE #"):
+            cur, kind = {"pulse": line.split("#")[1].split()[0]}, "pulse"
+            continue
+        if line.startswith("---- STATUS"):
+            if cur and kind == "status":
+                status.append(cur)
+            cur, kind = {"t_s": line.split("t=")[1].split()[0]}, "status"
+            continue
+        if line.startswith("====") and cur and kind == "pulse":
+            pulses.append(cur); cur, kind = None, None
+            continue
+        if line.startswith("PPG:"):                                   # plotter line
+            plot.append(dict(kv.split(":", 1) for kv in line.split(",") if ":" in kv))
+            continue
+        if cur is not None:
+            m = LINE.match(line)
+            if m:
+                name, value, rest = m.group(1).strip(), m.group(2), m.group(3) or ""
+                # text values (Flow status, Dicrotic notch ...) keep the whole text
+                try:
+                    float(value)
+                    cur[name] = value
+                except ValueError:
+                    cur[name] = (value + " " + rest).strip() if value != "n/a" else ""
+    if cur and kind == "status":
+        status.append(cur)
+    return pulses, status, plot
+
+
+def write(rows, path):
+    if not rows:
+        return 0
+    cols = []
+    for r in rows:
+        for k in r:
+            if k not in cols:
+                cols.append(k)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        w.writerows(rows)
+    return len(rows)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("port", nargs="?")
+    ap.add_argument("seconds", nargs="?", type=float, default=60)
+    ap.add_argument("--prefix", default="session")
+    ap.add_argument("--baseline", action="store_true", help="send 'b' 15 s after start")
+    ap.add_argument("--parse", help="convert an existing raw log instead of recording")
+    a = ap.parse_args()
+
+    if a.parse:
+        lines = open(a.parse, encoding="utf-8", errors="ignore").read().splitlines()
+    else:
+        if not a.port:
+            sys.exit("give a serial port, e.g. COM5 or /dev/ttyACM0")
+        import serial
+        ser = serial.Serial(a.port, 460800, timeout=0.5)
+        lines, t0, sent = [], time.time(), False
+        with open(a.prefix + "_raw.txt", "w", encoding="utf-8") as raw:
+            while time.time() - t0 < a.seconds:
+                if a.baseline and not sent and time.time() - t0 > 15:
+                    ser.write(b"b"); sent = True
+                l = ser.readline().decode(errors="ignore")
+                if l:
+                    raw.write(l); lines.append(l)
+                    if "Flow status" in l or "EVENT" in l:
+                        print(l.strip())
+        ser.close()
+
+    p, s, q = parse(lines)
+    print(f"pulses: {write(p, a.prefix + '_pulses.csv')}  status: {write(s, a.prefix + '_status.csv')}  "
+          f"plot samples: {write(q, a.prefix + '_plot.csv')}")
+
+
+if __name__ == "__main__":
+    main()
